@@ -41,7 +41,7 @@ Do not add a shared TMDB key to Vercel: each parent enters their personal key in
 
 ## 4. Deploy and verify
 
-Deploy, or redeploy after changing environment variables. Use the stable **production** domain, for example `https://kidsscreen.vercel.app`.
+Deploy, or redeploy after changing environment variables. Use the stable **production** domain, for example `https://kids-screen.vercel.app`.
 
 1. Open `/health` and confirm `{"status":"ok","version":"0.1.1"}`. This confirms initialization; creating a configuration also verifies Redis credentials and TMDB connectivity.
 2. Open `/`, enter a personal TMDB API key and rating, and create a test configuration. Save its private management token.

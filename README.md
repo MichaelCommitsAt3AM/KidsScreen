@@ -4,9 +4,17 @@ A self-hosted Stremio-compatible metadata add-on and Nuvio parental-policy servi
 
 KidsScreen is a separate project from Nuvio. Nuvio connects over HTTP; neither repository imports the other's source code.
 
+## Get started
+
+Open [KidsScreen](https://kids-screen.vercel.app) to create a standalone add-on configuration. Enter your **personal TMDB API key**, choose G, PG or PG-13, and save the returned manifest URL. The separate management token can revoke that configuration; save it privately. Keys never appear in manifest URLs or response bodies.
+
+Alternatively, use Nuvio's profile editor: enable **Kids account**, choose the maximum rating, enter the TMDB API key, then save. Nuvio's profile editor automatically connects to `https://kids-screen.vercel.app` and keeps the personal TMDB key field. Existing Nuvio configurations retain their stored endpoint until reconfigured.
+
+Nuvio's database needs `20261016120000_kids_profiles.sql` and `20261016170000_optional_kids_profile_pin.sql` from its `supabase/migrations/` directory. Profile PINs are optional; kids setup does not require one. Nuvio automatically adds the configured KidsScreen catalog to that secondary profile and keeps its stream providers. Kids profiles have independent add-ons. Switching profiles requires a PIN only if the destination profile has one configured.
+
 ## Run locally
 
-Install Node.js 22 or newer, then run in this folder:
+For local development, install Node.js 22 or newer, then run in this folder:
 
 ```powershell
 npm ci
@@ -14,11 +22,7 @@ npm run build
 npm start
 ```
 
-Open [http://127.0.0.1:7879](http://127.0.0.1:7879) to create a standalone add-on configuration. Enter your **personal TMDB API key**, choose G, PG or PG-13, and save the returned manifest URL. The separate management token can revoke that configuration; save it privately. Keys never appear in manifest URLs or response bodies.
-
-Alternatively, use Nuvio's profile editor: enable **Kids account**, choose the maximum rating, enter the TMDB API key, then save. Nuvio's profile editor automatically connects to `https://kids-screen.vercel.app` and keeps the personal TMDB key field. Local development of the standalone addon is still available at the address above; existing Nuvio configurations retain their stored endpoint until reconfigured.
-
-Nuvio's database needs `20261016120000_kids_profiles.sql` and `20261016170000_optional_kids_profile_pin.sql` from its `supabase/migrations/` directory. Profile PINs are optional; kids setup does not require one. Nuvio automatically adds the configured KidsScreen catalog to that secondary profile and keeps its stream providers. Kids profiles have independent add-ons. Switching profiles requires a PIN only if the destination profile has one configured.
+Open the local address printed by the server to create a configuration on your local instance.
 
 ## Rating policy
 
