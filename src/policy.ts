@@ -16,3 +16,14 @@ export function usRatings(type: MediaType, details: any): string[] {
     ? (details.release_dates?.results ?? []).filter((row: any) => row.iso_3166_1 === 'US').flatMap((row: any) => (row.release_dates ?? []).map((date: any) => String(date.certification ?? '')))
     : (details.content_ratings?.results ?? []).filter((row: any) => row.iso_3166_1 === 'US').map((row: any) => String(row.rating ?? ''));
 }
+
+// TMDB movie genre IDs are stable across translated genre names.
+export const MOVIE_HORROR_GENRE_ID = 27;
+export function allowsTitle(type: MediaType, details: any, maximum: MaxRating): boolean {
+  if (!details || details.adult) return false;
+  if (type === 'movie') {
+    if (!Array.isArray(details.genres) || !details.genres.length) return false;
+    if (details.genres.some((genre: any) => genre?.id === MOVIE_HORROR_GENRE_ID)) return false;
+  }
+  return allowsRatings(type, usRatings(type, details), maximum);
+}

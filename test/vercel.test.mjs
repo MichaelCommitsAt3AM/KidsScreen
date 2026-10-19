@@ -40,6 +40,8 @@ test('Vercel routes retain encrypted configs across instances, accept parsed bod
     process.env.VERCEL = '1';
     delete process.env.UPSTASH_REDIS_REST_URL;
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    delete process.env.KV_REST_API_URL;
+    delete process.env.KV_REST_API_TOKEN;
     assert.throws(() => deploymentStore());
     assert.equal((await originalFetch(base + '/health')).status, 503);
     process.env.UPSTASH_REDIS_REST_URL = 'https://redis.example';
@@ -52,6 +54,10 @@ test('Vercel routes retain encrypted configs across instances, accept parsed bod
     const config = await created.json();
     assert.equal(JSON.stringify([...records.values()]).includes(apiKey), false);
     assert.equal(JSON.stringify([...records.values()]).includes(config.managementToken), false);
+    process.env.KV_REST_API_URL = process.env.UPSTASH_REDIS_REST_URL;
+    process.env.KV_REST_API_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
     const independentInstance = await deploymentStore();
     assert.equal((await independentInstance.get(config.id)).apiKey, apiKey);
     assert.equal((await originalFetch(base + config.manifestPath)).status, 200);

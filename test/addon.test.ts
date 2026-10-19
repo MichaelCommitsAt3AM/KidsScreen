@@ -6,11 +6,11 @@ import path from 'node:path';
 import { ConfigStore } from '../src/store.js';
 import { Tmdb } from '../src/tmdb.js';
 import { createApp } from '../src/server.js';
-import { allowsRatings, usRatings } from '../src/policy.js';
+import { allowsRatings, allowsTitle, usRatings } from '../src/policy.js';
 
 const apiKey = 'test-secret-api-key-do-not-log';
 function movie(id: number, certifications: string[]) {
-  return { id, title: `Movie ${id}`, imdb_id: `tt10000${id}`, adult: false, poster_path: '/poster.jpg', backdrop_path: '/backdrop.jpg', release_dates: { results: [{ iso_3166_1: 'US', release_dates: certifications.map(certification => ({ certification })) }] } };
+  return { id, title: `Movie ${id}`, imdb_id: `tt10000${id}`, adult: false, genres: [{ id: 16, name: 'Animation' }], poster_path: '/poster.jpg', backdrop_path: '/backdrop.jpg', release_dates: { results: [{ iso_3166_1: 'US', release_dates: certifications.map(certification => ({ certification })) }] } };
 }
 test('ratings deny missing, unknown, adult, and conflicting higher US classifications', () => {
   assert.equal(allowsRatings('movie', [], 'PG'), false);
@@ -54,10 +54,11 @@ test('HTTP configuration, manifests, search, metadata and Nuvio checks share the
     let data: unknown;
     if (endpoint.endsWith('/authentication')) data = { success: true };
     else if (endpoint.endsWith('/find/tt100001')) data = { movie_results: [{ id: 1 }] };
-    else if (endpoint.endsWith('/discover/movie') || endpoint.endsWith('/search/movie')) data = { results: [{ id: 1 }, { id: 2 }, { id: 3 }] };
+    else if (endpoint.endsWith('/discover/movie') || endpoint.endsWith('/search/movie')) data = { results: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }] };
     else if (endpoint.endsWith('/movie/1')) data = movie(1, ['G']);
     else if (endpoint.endsWith('/movie/2')) data = movie(2, ['R']);
     else if (endpoint.endsWith('/movie/3')) data = movie(3, []);
+    else if (endpoint.endsWith('/movie/4')) data = { ...movie(4, ['PG-13']), genres: [{ id: 16, name: 'Animation' }, { id: 27, name: 'Horreur' }] };
     else if (endpoint.endsWith('/movie/99')) throw new Error(`secret ${apiKey}`);
     else throw new Error('Unexpected fixture endpoint');
     return new Response(JSON.stringify(data), { status: 200 });
@@ -68,11 +69,11 @@ test('HTTP configuration, manifests, search, metadata and Nuvio checks share the
   const post = (route: string, value: unknown) => fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) });
   try {
     assert.equal((await post('/v1/configurations', { apiKey, maxRating: 'R' })).status, 400);
-    const response = await post('/v1/configurations', { apiKey, maxRating: 'G' });
+    const response = await post('/v1/configurations', { apiKey, maxRating: 'PG-13' });
     assert.equal(response.status, 201); const config = await response.json() as any;
     assert.equal(JSON.stringify(config).includes(apiKey), false);
     const manifest = await (await fetch(base + config.manifestPath)).json() as any;
-    assert.equal(manifest.name, 'KidsScreen · G'); assert.equal(manifest.catalogs.length, 6);
+    assert.equal(manifest.name, 'KidsScreen · PG-13'); assert.equal(manifest.catalogs.length, 6);
     for (const route of [`/${config.id}/catalog/movie/kids-popular.json`, `/${config.id}/catalog/movie/kids-popular/search=test.json`]) {
       const catalog = await (await fetch(base + route)).json() as any;
       assert.deepEqual(catalog.metas.map((item: any) => item.id), ['tt100001']);
@@ -80,8 +81,10 @@ test('HTTP configuration, manifests, search, metadata and Nuvio checks share the
     }
     const meta = await (await fetch(`${base}/${config.id}/meta/movie/tmdb:2.json`)).json() as any;
     assert.equal(meta.meta, null);
-    const checked = await (await post(`/${config.id}/check`, { items: [{ type: 'movie', id: 'tt100001' }, { type: 'movie', id: 'tmdb:2' }, { type: 'movie', id: 'tmdb:99' }] })).json() as any;
-    assert.deepEqual(checked.items.map((item: any) => item.allowed), [true, false, false]);
+    const horrorMeta = await (await fetch(`${base}/${config.id}/meta/movie/tmdb:4.json`)).json() as any;
+    assert.equal(horrorMeta.meta, null);
+    const checked = await (await post(`/${config.id}/check`, { items: [{ type: 'movie', id: 'tt100001' }, { type: 'movie', id: 'tmdb:2' }, { type: 'movie', id: 'tmdb:99' }, { type: 'movie', id: 'tmdb:4' }] })).json() as any;
+    assert.deepEqual(checked.items.map((item: any) => item.allowed), [true, false, false, false]);
     assert.equal(JSON.stringify(checked).includes(apiKey), false);
     offline = true;
     const failure = await fetch(`${base}/${config.id}/catalog/series/kids-popular.json`);
@@ -116,4 +119,14 @@ test('series metadata checks US ratings and exposes episode IDs while omitting s
   assert.equal(result!.videos[0].id, 'tt200004:1:1');
   assert.equal(result!.videos.length, 1);
   assert.equal(await tmdb.meta({ ...config, maxRating: 'G' }, { type: 'series', id: 'tmdb:4' }), null);
+});
+
+test('horror veto overrides every age rating and uses genre IDs across languages and mixed genres', () => {
+  for (const rating of ['G', 'PG', 'PG-13'] as const) {
+    const horror = { ...movie(4, [rating]), genres: [{ id: 16, name: 'Animation' }, { id: 27, name: 'Horreur' }] };
+    assert.equal(allowsTitle('movie', horror, 'PG-13'), false);
+  }
+  assert.equal(allowsTitle('movie', movie(1, ['PG-13']), 'PG-13'), true);
+  assert.equal(allowsTitle('movie', { ...movie(1, ['PG']), genres: [] }, 'PG-13'), false);
+  assert.equal(allowsTitle('movie', { ...movie(1, ['PG']), genres: undefined }, 'PG-13'), false);
 });

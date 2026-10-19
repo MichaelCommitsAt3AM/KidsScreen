@@ -77,9 +77,10 @@ export class ConfigStore {
 }
 
 export function deploymentStore(env: NodeJS.ProcessEnv = process.env) {
-  const url = env.UPSTASH_REDIS_REST_URL, token = env.UPSTASH_REDIS_REST_TOKEN;
+  const url = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL;
+  const token = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN;
   if (url || token || env.VERCEL) {
-    if (!url || !token) throw new Error('Connect Redis and set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN');
+    if (!url || !token) throw new Error('Connect Redis and set UPSTASH_REDIS_REST_URL/TOKEN or KV_REST_API_URL/TOKEN');
     return Promise.resolve(ConfigStore.redis(url, token, env.KIDSSCREEN_ENCRYPTION_KEY || ''));
   }
   return ConfigStore.open(env.KIDSSCREEN_DATA_DIR || '.data', env.KIDSSCREEN_ENCRYPTION_KEY, env.NODE_ENV === 'production');

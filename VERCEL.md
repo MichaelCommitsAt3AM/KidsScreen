@@ -1,6 +1,6 @@
 # Deploy KidsScreen to Vercel
 
-The repository includes `vercel.json` and `api/index.mjs`. All routes use the same Node handler as local development. Vercel uses Upstash Redis REST storage instead of local files; configuration values remain AES-256-GCM encrypted. There is no runtime npm dependency to install beyond Node. This is deployment preparation, not a completed hosted deployment.
+The repository includes `vercel.json` and `api/index.mjs`. All routes use the same Node handler as local development. Vercel uses Upstash Redis REST storage instead of local files; configuration values remain AES-256-GCM encrypted. There is no runtime npm dependency to install beyond Node. The service was deployed on 2026-10-16 at https://kids-screen.vercel.app. The public setup page and health endpoint returned HTTP 200. Real-TMDB enrollment and playback still require a personal API key.
 
 ## 1. Push the KidsScreen repository
 
@@ -27,7 +27,7 @@ The server expects the read-write REST credentials under these exact server envi
 | `UPSTASH_REDIS_REST_TOKEN` | The read-write REST token, not the read-only token |
 | `KIDSSCREEN_ENCRYPTION_KEY` | A persistent, private base64-encoded 32-byte key |
 
-Some integrations offer a variable prefix. If the generated variable names differ, add the expected names manually in Vercel's Environment Variables settings. Do not use `VITE_` or `NEXT_PUBLIC_` prefixes.
+The integration may generate `KV_REST_API_URL` and `KV_REST_API_TOKEN` instead. KidsScreen accepts these names directly, so you do not need to duplicate them. Explicit `UPSTASH_REDIS_REST_*` values take precedence. For any other prefix, add the expected names manually in Vercel's Environment Variables settings. Do not use `VITE_` or `NEXT_PUBLIC_` prefixes.
 
 Generate the encryption key locally:
 
@@ -43,7 +43,7 @@ Do not add a shared TMDB key to Vercel: each parent enters their personal key in
 
 Deploy, or redeploy after changing environment variables. Use the stable **production** domain, for example `https://kidsscreen.vercel.app`.
 
-1. Open `/health` and confirm `{"status":"ok","version":"0.1.0"}`. This confirms initialization; creating a configuration also verifies Redis credentials and TMDB connectivity.
+1. Open `/health` and confirm `{"status":"ok","version":"0.1.1"}`. This confirms initialization; creating a configuration also verifies Redis credentials and TMDB connectivity.
 2. Open `/`, enter a personal TMDB API key and rating, and create a test configuration. Save its private management token.
 3. Open the returned manifest URL. Confirm its six catalogs, then test a catalog. The manifest ID is a private access capability; don't share the URL publicly.
 4. Redeploy and confirm the same manifest still loads. This checks that Redis and the encryption key persist.
@@ -57,11 +57,11 @@ From an adult profile, open the target profile editor:
 
 1. Enable **Kids account**.
 2. Choose G, PG or PG-13.
-3. Enter the personal TMDB key and main profile's parent PIN.
-4. Expand **KidsScreen connection** and replace `http://127.0.0.1:7879` with your production HTTPS domain, without a path.
+3. Enter the personal TMDB key. No main-profile PIN is required on the updated Nuvio build.
+4. The updated Nuvio profile editor uses `https://kids-screen.vercel.app` automatically. It has no server-address field.
 5. Save, switch to the kids profile, and test Home, featured titles, search, details and playback.
 
-Re-save existing local kids profiles with the hosted address and TMDB key. Local configuration IDs are not automatically copied into Redis. Keep the local server running until any profiles that still reference it are moved.
+Re-save existing local kids profiles with the TMDB key to move them to the hosted service. Local configuration IDs are not automatically copied into Redis. Keep the local server running until any profiles that still reference it are moved.
 
 ## References
 

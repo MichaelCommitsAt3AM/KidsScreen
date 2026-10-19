@@ -16,11 +16,13 @@ npm start
 
 Open [http://127.0.0.1:7879](http://127.0.0.1:7879) to create a standalone add-on configuration. Enter your **personal TMDB API key**, choose G, PG or PG-13, and save the returned manifest URL. The separate management token can revoke that configuration; save it privately. Keys never appear in manifest URLs or response bodies.
 
-Alternatively, use Nuvio's profile editor: enable **Kids account**, choose the maximum rating, enter the TMDB API key and main profile's PIN, then save. The default connection is `http://127.0.0.1:7879`. The Nuvio backend calls this service directly, so localhost means the computer running Nuvio. On other computers/devices, use a reachable HTTPS deployment.
+Alternatively, use Nuvio's profile editor: enable **Kids account**, choose the maximum rating, enter the TMDB API key, then save. Nuvio's profile editor automatically connects to `https://kids-screen.vercel.app` and keeps the personal TMDB key field. Local development of the standalone addon is still available at the address above; existing Nuvio configurations retain their stored endpoint until reconfigured.
 
-Nuvio's database must first have `20261016120000_kids_profiles.sql` from its `supabase/migrations/` directory installed. Set a PIN on the main profile before enrolling a secondary profile. Nuvio automatically adds the configured KidsScreen catalog to that secondary profile and keeps its stream providers. Kids profiles have independent add-ons. Exiting a kids profile requires the main profile's PIN, including switches to a different kids profile.
+Nuvio's database needs `20261016120000_kids_profiles.sql` and `20261016170000_optional_kids_profile_pin.sql` from its `supabase/migrations/` directory. Profile PINs are optional; kids setup does not require one. Nuvio automatically adds the configured KidsScreen catalog to that secondary profile and keeps its stream providers. Kids profiles have independent add-ons. Switching profiles requires a PIN only if the destination profile has one configured.
 
 ## Rating policy
+
+Movies tagged with TMDB’s **Horror** genre are always excluded, even when rated G, PG or PG-13 and even when they also have other genres. Movies with missing genre metadata are withheld. The same policy applies to catalogs, search, metadata and Nuvio eligibility checks (including featured titles and playback). This relies on TMDB’s genre classification.
 
 All classifications use **United States** ratings, independently of interface language. Every returned title is checked using TMDB's movie release certifications or TV content ratings. Search results receive the same checks; `include_adult=false` alone is not considered an age restriction.
 
@@ -69,7 +71,7 @@ Keep the key out of Git. Back up the key and encrypted configuration directory s
 
 For Docker, build the included `Dockerfile`, bind a persistent volume to `/data`, supply the encryption key as an environment secret, and expose the service through an HTTPS reverse proxy. Set `HOST=0.0.0.0` outside loopback development. The default is loopback-only. See `.env.example`; environment files are optional and must be explicitly loaded, for example `node --env-file=.env dist/server.js`.
 
-Run one service instance against each configuration directory. The file-backed mode has no shared multi-instance database; the Vercel/Upstash mode shares encrypted configurations across instances. In-process limits use the direct peer address; a reverse proxy should enforce provisioning/request limits per client and must disable sensitive URL/body logging. No production deployment, domain or GitHub remote has been created by this work.
+Run one service instance against each configuration directory. The file-backed mode has no shared multi-instance database; the Vercel/Upstash mode shares encrypted configurations across instances. In-process limits use the direct peer address; a reverse proxy should enforce provisioning/request limits per client and must disable sensitive URL/body logging. The production service is https://kids-screen.vercel.app; its separate GitHub repository is https://github.com/MichaelCommitsAt3AM/KidsScreen. Public setup and health checks pass; enrollment/catalog/playback acceptance still needs a personal TMDB key.
 
 ## Checks
 

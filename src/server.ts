@@ -6,7 +6,7 @@ import { validRating, type Configuration, type MediaType } from './policy.js';
 import { configurationPage } from './setup.js';
 
 const manifest = (rating: string) => ({
-  id: 'org.kidsscreen.catalogs', version: '0.1.0', name: `KidsScreen · ${rating}`, description: 'Rating-filtered movies and series. Requires a personal TMDB API key.',
+  id: 'org.kidsscreen.catalogs', version: '0.1.1', name: `KidsScreen · ${rating}`, description: 'Rating-filtered movies and series. Requires a personal TMDB API key.',
   types: ['movie', 'series'], resources: ['catalog', { name: 'meta', types: ['movie', 'series'], idPrefixes: ['tt', 'tmdb:'] }],
   catalogs: (['movie', 'series'] as const).flatMap(type => ['popular', 'animation', 'family'].map(kind => ({ type, id: `kids-${kind}`, name: `KidsScreen ${kind[0]!.toUpperCase()}${kind.slice(1)}`, extra: [{ name: 'skip' }, ...(kind === 'popular' ? [{ name: 'search' }] : [])] }))),
   behaviorHints: { configurable: true, configurationRequired: false },
@@ -30,7 +30,7 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb()) {
     };
     try {
       const url = new URL(request.url || '/', 'http://localhost');
-      if (request.method === 'GET' && url.pathname === '/health') return send(200, { status: 'ok', version: '0.1.0' });
+      if (request.method === 'GET' && url.pathname === '/health') return send(200, { status: 'ok', version: '0.1.1' });
       const address = request.socket.remoteAddress || 'unknown';
       const window = limits.get(address);
       if (!window || window.reset < Date.now()) { if (limits.size > 10000) limits.clear(); limits.set(address, { count: 1, reset: Date.now() + 60000 }); }
