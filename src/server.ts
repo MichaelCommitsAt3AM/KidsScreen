@@ -4,6 +4,8 @@ import { ConfigStore, deploymentStore } from './store.js';
 import { Tmdb, type MediaRef } from './tmdb.js';
 import { validRating, type Configuration, type MediaType } from './policy.js';
 import { configurationPage } from './setup.js';
+import { NuvioAuthorization, ProxyAuthorizationError } from './nuvio-auth.js';
+import { enrichment, validateEnrichmentRequest } from './enrichment.js';
 
 const manifest = (rating: string) => ({
   id: 'org.kidsscreen.catalogs', version: '0.1.1', name: `KidsScreen · ${rating}`, description: 'Rating-filtered movies and series. Requires a personal TMDB API key.',
@@ -22,7 +24,7 @@ async function body(request: IncomingMessage): Promise<any> {
   let text = ''; for await (const chunk of request) { text += chunk; if (Buffer.byteLength(text) > 65536) throw new Error('Request is too large'); }
   return JSON.parse(text || '{}');
 }
-export function createHandler(store: ConfigStore, tmdb = new Tmdb()) {
+export function createHandler(store: ConfigStore, tmdb = new Tmdb(), authorization = new NuvioAuthorization()) {
   const limits = new Map<string, { count: number; reset: number }>();
   return async (request: IncomingMessage, response: ServerResponse) => {
     const send = (status: number, data: unknown) => {
@@ -49,6 +51,45 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb()) {
         const result = await store.create(config);
         return send(201, { ...result, manifestPath: `/${result.id}/manifest.json`, maxRating: config.maxRating });
       }
+      const enrichmentMatch = /^\/v1\/configurations\/([A-Za-z0-9_-]{43})\/tmdb$/.exec(url.pathname);
+      if (request.method === 'POST' && enrichmentMatch) {
+        const configId = enrichmentMatch[1]!;
+        try { await authorization.requireConfiguration(request.headers.authorization, configId); }
+        catch (error) { if (error instanceof ProxyAuthorizationError) return send(error.status, { error: error.message }); throw error; }
+        let config: Configuration;
+        try { config = await store.get(configId); } catch { return send(404, { error: 'Configuration unavailable' }); }
+        let input: ReturnType<typeof validateEnrichmentRequest>;
+        try { input = validateEnrichmentRequest(await body(request)); } catch { return send(400, { error: 'Invalid enrichment request' }); }
+        const data = await enrichment(tmdb, config, input.endpoint, input.query);
+        if (data === null) return send(404, { error: 'Title is unavailable for this kids profile' });
+        return send(200, data);
+      }
+      // A signed-in Nuvio owner can edit from a second device without possessing the
+      // original device's management token. The API key never leaves the service.
+      const ownedCloneMatch = /^\/v1\/configurations\/([A-Za-z0-9_-]{43})\/clone-owned$/.exec(url.pathname);
+      if (request.method === 'POST' && ownedCloneMatch) {
+        const id = ownedCloneMatch[1]!;
+        try { await authorization.requireConfiguration(request.headers.authorization, id); }
+        catch (error) { if (error instanceof ProxyAuthorizationError) return send(error.status, { error: error.message }); throw error; }
+        let previous: Configuration;
+        try { previous = await store.get(id); }
+        catch { return send(404, { error: 'Configuration unavailable.' }); }
+        const input = await body(request);
+        if (!validRating(input.maxRating)) return send(400, { error: 'Choose a supported maximum rating.' });
+        const result = await store.create({ apiKey: previous.apiKey, language: previous.language, maxRating: input.maxRating });
+        return send(201, { ...result, manifestPath: `/${result.id}/manifest.json`, maxRating: input.maxRating });
+      }
+      // Keep capability-based management for standalone/custom-server setups.
+      const cloneMatch = /^\/v1\/configurations\/([A-Za-z0-9_-]{43})\/clone$/.exec(url.pathname);
+      if (request.method === 'POST' && cloneMatch) {
+        let previous: Configuration;
+        try { previous = await store.getManaged(cloneMatch[1]!, request.headers.authorization?.replace(/^Bearer /, '') || ''); }
+        catch { return send(403, { error: 'Configuration or management token is invalid.' }); }
+        const input = await body(request);
+        if (!validRating(input.maxRating)) return send(400, { error: 'Choose a supported maximum rating.' });
+        const result = await store.create({ apiKey: previous.apiKey, language: previous.language, maxRating: input.maxRating });
+        return send(201, { ...result, manifestPath: `/${result.id}/manifest.json`, maxRating: input.maxRating });
+      }
       const deleteMatch = /^\/v1\/configurations\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
       if (request.method === 'DELETE' && deleteMatch) {
         try { await store.remove(deleteMatch[1]!, request.headers.authorization?.replace(/^Bearer /, '') || ''); }
@@ -63,7 +104,7 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb()) {
       if (request.method === 'POST' && parts.length === 2 && parts[1] === 'check') {
         const input = await body(request);
         if (!Array.isArray(input.items) || input.items.length > 200 || input.items.some((item: any) => !item || !['movie', 'series'].includes(item.type) || typeof item.id !== 'string' || item.id.length > 128)) return send(400, { error: 'Provide up to 200 movie or series IDs.' });
-        const items = await Promise.all(input.items.map(async (item: MediaRef) => ({ ...item, allowed: await tmdb.allowed(config, item) })));
+        const items = await Promise.all(input.items.map(async (item: MediaRef) => ({ ...item, allowed: await tmdb.allowed(config, item, input.items.length === 1 ? 'interactive' : 'background') })));
         return send(200, { items });
       }
       if (request.method !== 'GET') return send(405, { error: 'Method not allowed' });
@@ -85,7 +126,7 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb()) {
     }
   };
 }
-export function createApp(store: ConfigStore, tmdb = new Tmdb()) { return createServer(createHandler(store, tmdb)); }
+export function createApp(store: ConfigStore, tmdb = new Tmdb(), authorization = new NuvioAuthorization()) { return createServer(createHandler(store, tmdb, authorization)); }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const store = await deploymentStore();
   const app = createApp(store);

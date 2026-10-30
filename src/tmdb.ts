@@ -2,25 +2,55 @@ import { createHash } from 'node:crypto';
 import { allowsTitle, MOVIE_HORROR_GENRE_ID, usRatings, type Configuration, type MediaType } from './policy.js';
 export type MediaRef = { type: MediaType; id: string };
 type Fetch = typeof fetch;
+export type RequestPriority = 'interactive' | 'background';
 export class Tmdb {
   private cache = new Map<string, { expires: number; data: any }>();
   private inFlight = new Map<string, Promise<any>>();
   private catalogs = new Map<string, { items: any[]; nextPage: number; exhausted: boolean; expires: number; queue: Promise<void> }>();
   private active = 0;
-  private waiters: Array<() => void> = [];
+  private backgroundActive = 0;
+  private waiters: Array<{ key: string; priority: RequestPriority; start: (complete: () => void) => void }> = [];
   constructor(private request: Fetch = fetch) {}
-  private async slot<T>(work: () => Promise<T>): Promise<T> {
-    if (this.active >= 5) await new Promise<void>(resolve => this.waiters.push(resolve));
-    else this.active++;
-    try { return await work(); } finally { const next = this.waiters.shift(); if (next) next(); else this.active--; }
+  private drain() {
+    while (this.active < 5) {
+      let index = this.waiters.findIndex(item => item.priority === 'interactive');
+      if (index < 0) {
+        if (this.backgroundActive >= 4) return;
+        index = this.waiters.findIndex(item => item.priority === 'background');
+      }
+      if (index < 0) return;
+      const next = this.waiters.splice(index, 1)[0]!;
+      this.active++;
+      const background = next.priority === 'background';
+      if (background) this.backgroundActive++;
+      // The completion closure uses the priority at admission, not a later caller's priority.
+      const complete = () => { this.active--; if (background) this.backgroundActive--; this.drain(); };
+      next.start(complete);
+    }
   }
-  async get(config: Configuration, endpoint: string, parameters: Record<string, string> = {}): Promise<any> {
+  private slot<T>(key: string, priority: RequestPriority, work: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.waiters.push({ key, priority, start: complete => {
+        void Promise.resolve().then(work).then(resolve, reject).finally(complete);
+      } });
+      this.drain();
+    });
+  }
+  async get(config: Configuration, endpoint: string, parameters: Record<string, string> = {}, priority: RequestPriority = 'interactive'): Promise<any> {
     const url = new URL(`https://api.themoviedb.org/3/${endpoint}`);
     url.search = new URLSearchParams({ language: config.language, ...parameters, api_key: config.apiKey }).toString();
+    url.searchParams.sort();
     const key = createHash('sha256').update(url.toString()).digest('hex');
     const cached = this.cache.get(key); if (cached && cached.expires > Date.now()) return cached.data;
-    const pending = this.inFlight.get(key); if (pending) return pending;
-    const operation = this.slot(async () => {
+    const pending = this.inFlight.get(key);
+    if (pending) {
+      if (priority === 'interactive') {
+        const queued = this.waiters.find(item => item.key === key);
+        if (queued) { queued.priority = 'interactive'; this.drain(); }
+      }
+      return pending;
+    }
+    const operation = this.slot(key, priority, async () => {
       let response: Response;
       try { response = await this.request(url, { signal: AbortSignal.timeout(12000), redirect: 'error' }); }
       catch { throw new Error('TMDB is unavailable. Please try again.'); }
@@ -33,21 +63,21 @@ export class Tmdb {
     try { return await operation; } finally { this.inFlight.delete(key); }
   }
   async validate(config: Configuration) { await this.get(config, 'authentication'); }
-  async resolve(config: Configuration, ref: MediaRef): Promise<number | null> {
+  async resolve(config: Configuration, ref: MediaRef, priority: RequestPriority = 'interactive'): Promise<number | null> {
     if (/^tt\d{5,12}$/.test(ref.id)) {
-      const found = await this.get(config, `find/${ref.id}`, { external_source: 'imdb_id' });
+      const found = await this.get(config, `find/${ref.id}`, { external_source: 'imdb_id' }, priority);
       return (ref.type === 'movie' ? found.movie_results : found.tv_results)?.[0]?.id ?? null;
     }
     const tmdb = /^(?:tmdb:)(?:(movie|series|tv):)?(\d{1,10})$/.exec(ref.id);
     if (!tmdb || (tmdb[1] && (tmdb[1] === 'movie') !== (ref.type === 'movie'))) return null;
     return Number(tmdb[2]);
   }
-  async details(config: Configuration, ref: MediaRef): Promise<any | null> {
-    const id = await this.resolve(config, ref); if (id === null) return null;
-    return this.get(config, `${ref.type === 'movie' ? 'movie' : 'tv'}/${id}`, { append_to_response: ref.type === 'movie' ? 'release_dates,external_ids,images' : 'content_ratings,external_ids,images', include_image_language: 'en,null' });
+  async details(config: Configuration, ref: MediaRef, priority: RequestPriority = 'interactive'): Promise<any | null> {
+    const id = await this.resolve(config, ref, priority); if (id === null) return null;
+    return this.get(config, `${ref.type === 'movie' ? 'movie' : 'tv'}/${id}`, { append_to_response: ref.type === 'movie' ? 'release_dates,external_ids,images' : 'content_ratings,external_ids,images', include_image_language: 'en,null' }, priority);
   }
-  async allowed(config: Configuration, ref: MediaRef): Promise<boolean> {
-    try { const details = await this.details(config, ref); return allowsTitle(ref.type, details, config.maxRating); }
+  async allowed(config: Configuration, ref: MediaRef, priority: RequestPriority = 'background'): Promise<boolean> {
+    try { const details = await this.details(config, ref, priority); return allowsTitle(ref.type, details, config.maxRating); }
     catch { return false; }
   }
   private preview(type: MediaType, details: any) {
@@ -86,10 +116,10 @@ export class Tmdb {
           else if (type === 'series') params.with_genres = '16|10762|10751';
           if (type === 'movie') Object.assign(params, { certification_country: 'US', 'certification.lte': config.maxRating, without_genres: String(MOVIE_HORROR_GENRE_ID) });
         }
-        const result = await this.get(config, `${query ? 'search' : 'discover'}/${tmdbType}`, params);
+        const result = await this.get(config, `${query ? 'search' : 'discover'}/${tmdbType}`, params, 'background');
         const raw = (result.results ?? []).slice(0, 20);
         const eligible = await Promise.all(raw.map(async (item: any) => {
-          const details = await this.details(config, { type, id: `tmdb:${type}:${item.id}` });
+          const details = await this.details(config, { type, id: `tmdb:${type}:${item.id}` }, 'background');
           return allowsTitle(type, details, config.maxRating) ? this.preview(type, details) : null;
         }));
         for (const item of eligible) if (item && !pageState.items.some(existing => existing.id === item.id)) pageState.items.push(item);

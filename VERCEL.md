@@ -26,6 +26,10 @@ The server expects the read-write REST credentials under these exact server envi
 | `UPSTASH_REDIS_REST_URL` | The HTTPS REST endpoint from Upstash |
 | `UPSTASH_REDIS_REST_TOKEN` | The read-write REST token, not the read-only token |
 | `KIDSSCREEN_ENCRYPTION_KEY` | A persistent, private base64-encoded 32-byte key |
+| `KIDSSCREEN_NUVIO_SUPABASE_URL` | The trusted Nuvio Supabase project URL, e.g. `https://project.supabase.co` |
+| `KIDSSCREEN_NUVIO_PUBLISHABLE_KEY` | The project's public/publishable key (`sb_publishable_...` or legacy anon key) |
+
+The two `KIDSSCREEN_NUVIO_*` values are required for authenticated enrichment (`POST /v1/configurations/:id/tmdb`). Use the same Supabase project that the Nuvio apps sign in to. They are public client credentials, not the TMDB key or a service-role secret; never set a Supabase service-role key here. Enrichment verifies the caller's bearer token and then calls the caller-scoped `sync_pull_profiles()` RPC, requiring a kids-enabled profile that references the requested configuration. It returns 401 for missing/expired sessions, 403 for another account's or a disabled configuration, and 503 if these variables are absent. Without them, catalogs, playback checks and existing setups still work; only server-side enrichment is unavailable.
 
 The integration may generate `KV_REST_API_URL` and `KV_REST_API_TOKEN` instead. KidsScreen accepts these names directly, so you do not need to duplicate them. Explicit `UPSTASH_REDIS_REST_*` values take precedence. For any other prefix, add the expected names manually in Vercel's Environment Variables settings. Do not use `VITE_` or `NEXT_PUBLIC_` prefixes.
 
@@ -70,3 +74,15 @@ Re-save existing local kids profiles with the TMDB key to move them to the hoste
 - [Vercel runtime filesystem restrictions](https://vercel.com/docs/functions/runtimes)
 - [Upstash REST API](https://upstash.com/docs/redis/features/restapi)
 - [Vercel Deployment Protection](https://vercel.com/docs/deployment-protection)
+
+## Rating edits with the saved key (2026-10-19)
+
+The production service now supports authenticated `POST /v1/configurations/:id/clone` with `{maxRating}` and the existing management token. This reuses the encrypted key server-side and keeps the original configuration unchanged until Nuvio commits its policy and revokes it. Deployment `dpl_7zhBP8s6iHqdKgKzgK29z4CvLfAJ` was verified at the stable alias with a temporary replacement using existing management access; the changed-rating manifest loaded, unauthenticated access was rejected, the original stayed unchanged and the replacement was deleted.
+
+The same trusted Nuvio authentication configuration also protects `POST /v1/configurations/:id/clone-owned`, allowing profile rating edits on a second device without re-entering the TMDB key. The key remains encrypted in service storage and is never returned.
+
+## Enrichment performance deployment (2026-10-30)
+
+Deployed `dpl_7MrFU6SMJJQoAWj8mqJogPMVGMtR` to the existing production project and alias, https://kids-screen.vercel.app. This includes interactive TMDB request priority, verified metadata reuse, concurrent authentication checks, and in-flight configuration-read deduplication. Existing production environment variables and encrypted configuration storage were retained.
+
+Validation: all 28 local tests and TypeScript checks passed before deployment. Vercel reported READY; public production checks returned 200 for `/health` (version 0.1.1) and `/`, and 401 for an unauthenticated enrichment request. Authenticated end-to-end TMDB latency has not been measured in production.

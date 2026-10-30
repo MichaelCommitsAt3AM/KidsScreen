@@ -12,6 +12,7 @@ function encryptionKey(encodedKey?: string) {
   return key;
 }
 export class ConfigStore {
+  private reads = new Map<string, Promise<Configuration>>();
   private constructor(private storage: Storage, private key: Buffer) {}
   /** Shared durable storage for serverless deployments. Never falls back to local files. */
   static redis(url: string, token: string, encodedKey: string, transport: typeof fetch = fetch) {
@@ -64,14 +65,27 @@ export class ConfigStore {
     return { id, managementToken };
   }
   async get(id: string): Promise<Configuration> {
+    validId(id);
+    const pending = this.reads.get(id);
+    if (pending) return structuredClone(await pending);
+    const operation = this.readConfiguration(id);
+    this.reads.set(id, operation);
+    try { return structuredClone(await operation); }
+    finally { if (this.reads.get(id) === operation) this.reads.delete(id); }
+  }
+  private async readConfiguration(id: string): Promise<Configuration> {
     const sealed = JSON.parse(await this.storage.read(validId(id)));
     const cipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(sealed.iv, 'base64'));
     cipher.setAuthTag(Buffer.from(sealed.tag, 'base64'));
     return JSON.parse(Buffer.concat([cipher.update(Buffer.from(sealed.data, 'base64')), cipher.final()]).toString('utf8'));
   }
-  async remove(id: string, token: string) {
+  async getManaged(id: string, token: string): Promise<Configuration> {
     const config = await this.get(id);
     if (!timingSafeEqual(Buffer.from(config.managementHash, 'hex'), Buffer.from(tokenHash(token), 'hex'))) throw new Error('Invalid management token');
+    return config;
+  }
+  async remove(id: string, token: string) {
+    await this.getManaged(id, token);
     await this.storage.remove(validId(id));
   }
 }

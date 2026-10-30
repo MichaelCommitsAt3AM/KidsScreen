@@ -130,3 +130,37 @@ test('horror veto overrides every age rating and uses genre IDs across languages
   assert.equal(allowsTitle('movie', { ...movie(1, ['PG']), genres: [] }, 'PG-13'), false);
   assert.equal(allowsTitle('movie', { ...movie(1, ['PG']), genres: undefined }, 'PG-13'), false);
 });
+
+test('authorized rating changes reuse the encrypted key without exposing it or changing the old configuration', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kidsscreen-clone-'));
+  const store = await ConfigStore.open(directory);
+  const original = await store.create({ apiKey, maxRating: 'G', language: 'fr-FR' });
+  const other = await store.create({ apiKey: 'another-profile-secret', maxRating: 'PG', language: 'en-US' });
+  const app = createApp(store);
+  await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(app.address() as { port: number }).port}`;
+  const clone = (token: string, maxRating = 'PG', id = original.id) => fetch(`${base}/v1/configurations/${id}/clone`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ maxRating }),
+  });
+  try {
+    for (const token of ['', 'wrong', other.managementToken]) assert.equal((await clone(token)).status, 403);
+    assert.equal((await clone(original.managementToken, 'R')).status, 400);
+    assert.equal((await readdir(directory)).filter(name => name.endsWith('.json')).length, 2);
+    const response = await clone(original.managementToken);
+    assert.equal(response.status, 201);
+    const text = await response.text(), replacement = JSON.parse(text);
+    assert.equal(text.includes(apiKey), false);
+    assert.equal(text.includes(original.managementToken), false);
+    assert.notEqual(replacement.id, original.id);
+    assert.notEqual(replacement.managementToken, original.managementToken);
+    assert.equal((await store.get(original.id)).maxRating, 'G');
+    const restarted = await ConfigStore.open(directory), saved = await restarted.get(replacement.id);
+    assert.equal(saved.maxRating, 'PG'); assert.equal(saved.apiKey, apiKey); assert.equal(saved.language, 'fr-FR');
+    assert.equal((await readFile(path.join(directory, `${replacement.id}.json`), 'utf8')).includes(apiKey), false);
+    const manifest = await (await fetch(base + replacement.manifestPath)).json() as any;
+    assert.equal(manifest.name, 'KidsScreen · PG');
+    await assert.rejects(() => restarted.remove(replacement.id, original.managementToken));
+    await restarted.remove(replacement.id, replacement.managementToken);
+    assert.equal((await restarted.get(original.id)).maxRating, 'G');
+  } finally { await new Promise<void>(resolve => app.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});
