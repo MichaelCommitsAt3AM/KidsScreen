@@ -53,11 +53,12 @@ async function body(request: IncomingMessage): Promise<any> {
   let text = ''; for await (const chunk of request) { text += chunk; if (Buffer.byteLength(text) > 65536) throw new Error('Request is too large'); }
   return JSON.parse(text || '{}');
 }
+const SHARED_CACHE = 'public, max-age=300, s-maxage=1800, stale-while-revalidate=3600';
 export function createHandler(store: ConfigStore, tmdb = new Tmdb(), authorization = new NuvioAuthorization()) {
   const limits = new Map<string, { count: number; reset: number }>();
   return async (request: IncomingMessage, response: ServerResponse) => {
-    const send = (status: number, data: unknown) => {
-      response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }); response.end(JSON.stringify(data));
+    const send = (status: number, data: unknown, cacheControl = 'no-store') => {
+      response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': cacheControl, 'Access-Control-Allow-Origin': '*', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }); response.end(JSON.stringify(data));
     };
     try {
       const url = new URL(request.url || '/', 'http://localhost');
@@ -150,9 +151,14 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb(), authorizati
         const extras = new URLSearchParams(parts[4] ? decodeURIComponent(parts[4].replace(/\.json$/, '')) : url.search);
         const skip = Number(extras.get('skip') || 0), query = extras.get('search')?.trim();
         if (!Number.isSafeInteger(skip) || skip < 0 || (query?.length ?? 0) > 200 || (query && kind !== 'popular')) return send(400, { error: 'Invalid catalog query' });
-        return send(200, { metas: await tmdb.catalog(config, type, kind, skip, query) });
+        const metas = await tmdb.catalog(config, type, kind, skip, query);
+        // Config ids are immutable and part of the URL, so shared CDN caching is safe. Never cache empty results.
+        return send(200, { metas }, metas.length ? SHARED_CACHE : 'no-store');
       }
-      if (parts[1] === 'meta' && parts[3] && parts.length === 4) return send(200, { meta: await tmdb.meta(config, { type, id: decodeURIComponent(parts[3].replace(/\.json$/, '')) }) });
+      if (parts[1] === 'meta' && parts[3] && parts.length === 4) {
+        const meta = await tmdb.meta(config, { type, id: decodeURIComponent(parts[3].replace(/\.json$/, '')) });
+        return send(200, { meta }, meta ? SHARED_CACHE : 'no-store');
+      }
       return send(404, { error: 'Not found' });
     } catch (error) {
       // Never expose TMDB URLs, API keys, request bodies or stack traces.
