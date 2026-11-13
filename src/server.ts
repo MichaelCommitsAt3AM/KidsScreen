@@ -10,7 +10,7 @@ import { enrichment, validateEnrichmentRequest } from './enrichment.js';
 const manifest = (config: Configuration) => ({
   id: 'org.kidsscreen.catalogs', version: '0.1.1', name: `KidsScreen · ${config.maxRating}`, description: 'Rating-filtered movies and series. Requires a personal TMDB API key.',
   types: ['movie', 'series'], resources: ['catalog', { name: 'meta', types: ['movie', 'series'], idPrefixes: ['tt', 'tmdb:'] }],
-  catalogs: (['movie', 'series'] as const).flatMap(type => CATALOG_KINDS.filter(kind => !config.catalogs || config.catalogs.includes(kind)).map(kind => ({ type, id: `kids-${kind}`, name: `KidsScreen ${kind[0]!.toUpperCase()}${kind.slice(1)}`, extra: [{ name: 'skip' }, ...(kind === 'popular' ? [{ name: 'search' }] : [])] }))),
+  catalogs: (['movie', 'series'] as const).flatMap(type => CATALOG_KINDS.filter(kind => !config.catalogs || config.catalogs.includes(kind)).map(kind => ({ type, id: `kids-${kind}`, name: `Kids ${kind[0]!.toUpperCase()}${kind.slice(1)}`, extra: [{ name: 'skip' }, ...(kind === 'popular' ? [{ name: 'search' }] : [])] }))),
   behaviorHints: { configurable: true, configurationRequired: false },
 });
 type Settings = Pick<Configuration, 'maxRating' | 'language' | 'maxTvRating' | 'catalogs' | 'allowUnrated'>;
