@@ -2,17 +2,46 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { pathToFileURL } from 'node:url';
 import { ConfigStore, deploymentStore } from './store.js';
 import { Tmdb, type MediaRef } from './tmdb.js';
-import { validRating, type Configuration, type MediaType } from './policy.js';
-import { configurationPage } from './setup.js';
+import { CATALOG_KINDS, validRating, validTvRating, type CatalogKind, type Configuration, type MediaType } from './policy.js';
+import { readFile } from 'node:fs/promises';
 import { NuvioAuthorization, ProxyAuthorizationError } from './nuvio-auth.js';
 import { enrichment, validateEnrichmentRequest } from './enrichment.js';
 
-const manifest = (rating: string) => ({
-  id: 'org.kidsscreen.catalogs', version: '0.1.1', name: `KidsScreen · ${rating}`, description: 'Rating-filtered movies and series. Requires a personal TMDB API key.',
+const manifest = (config: Configuration) => ({
+  id: 'org.kidsscreen.catalogs', version: '0.1.1', name: `KidsScreen · ${config.maxRating}`, description: 'Rating-filtered movies and series. Requires a personal TMDB API key.',
   types: ['movie', 'series'], resources: ['catalog', { name: 'meta', types: ['movie', 'series'], idPrefixes: ['tt', 'tmdb:'] }],
-  catalogs: (['movie', 'series'] as const).flatMap(type => ['popular', 'animation', 'family'].map(kind => ({ type, id: `kids-${kind}`, name: `KidsScreen ${kind[0]!.toUpperCase()}${kind.slice(1)}`, extra: [{ name: 'skip' }, ...(kind === 'popular' ? [{ name: 'search' }] : [])] }))),
+  catalogs: (['movie', 'series'] as const).flatMap(type => CATALOG_KINDS.filter(kind => !config.catalogs || config.catalogs.includes(kind)).map(kind => ({ type, id: `kids-${kind}`, name: `KidsScreen ${kind[0]!.toUpperCase()}${kind.slice(1)}`, extra: [{ name: 'skip' }, ...(kind === 'popular' ? [{ name: 'search' }] : [])] }))),
   behaviorHints: { configurable: true, configurationRequired: false },
 });
+type Settings = Pick<Configuration, 'maxRating' | 'language' | 'maxTvRating' | 'catalogs' | 'allowUnrated'>;
+/** Validates user-editable settings; omitted optional fields fall back to `previous` (clones) or defaults. */
+function settingsFrom(input: any, previous?: Configuration): Settings | string {
+  if (!validRating(input.maxRating)) return previous ? 'Choose a supported maximum rating.' : 'Enter a valid TMDB API key and maximum rating.';
+  const language = input.language ?? previous?.language ?? 'en-US';
+  if (typeof language !== 'string' || !/^[a-z]{2}(?:-[A-Z]{2})?$/.test(language)) return 'Invalid language.';
+  const settings: Settings = { maxRating: input.maxRating, language };
+  const tv = input.maxTvRating ?? previous?.maxTvRating;
+  if (tv !== undefined && tv !== '') { if (!validTvRating(tv)) return 'Choose a supported TV rating.'; settings.maxTvRating = tv; }
+  const catalogs = input.catalogs ?? previous?.catalogs;
+  if (catalogs !== undefined) {
+    if (!Array.isArray(catalogs) || !catalogs.length || catalogs.some(kind => !CATALOG_KINDS.includes(kind))) return 'Choose at least one supported catalog.';
+    settings.catalogs = CATALOG_KINDS.filter(kind => catalogs.includes(kind));
+  }
+  const unrated = input.allowUnrated ?? previous?.allowUnrated;
+  if (unrated !== undefined) { if (typeof unrated !== 'boolean') return 'Invalid unrated setting.'; if (unrated) settings.allowUnrated = true; }
+  return settings;
+}
+const publicFiles: Record<string, [string, string]> = {
+  '/': ['index.html', 'text/html; charset=utf-8'], '/configure': ['index.html', 'text/html; charset=utf-8'],
+  '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'],
+};
+const pageCache = new Map<string, Buffer>();
+async function publicFile(name: string) {
+  // Cache in production (Vercel/Docker); read fresh in development so edits show on reload.
+  let data = process.env.NODE_ENV === 'production' || process.env.VERCEL ? pageCache.get(name) : undefined;
+  if (!data) { data = await readFile(new URL(`../public/${name}`, import.meta.url)); pageCache.set(name, data); }
+  return data;
+}
 async function body(request: IncomingMessage): Promise<any> {
   // Vercel may provide an already-parsed body; the standalone server provides a stream.
   const parsed = (request as IncomingMessage & { body?: unknown }).body;
@@ -37,16 +66,17 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb(), authorizati
       const window = limits.get(address);
       if (!window || window.reset < Date.now()) { if (limits.size > 10000) limits.clear(); limits.set(address, { count: 1, reset: Date.now() + 60000 }); }
       else if (++window.count > 180) return send(429, { error: 'Too many requests. Please wait a minute.' });
-      if (request.method === 'GET' && (url.pathname === '/' || url.pathname === '/configure')) {
-        response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' https://www.themoviedb.org; frame-ancestors 'none'" });
-        return response.end(configurationPage);
+      const asset = request.method === 'GET' ? publicFiles[url.pathname] : undefined;
+      if (asset) {
+        response.writeHead(200, { 'Content-Type': asset[1], 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: https://www.themoviedb.org; frame-ancestors 'none'; base-uri 'none'; form-action 'none'" });
+        return response.end(await publicFile(asset[0]));
       }
       if (request.method === 'POST' && url.pathname === '/v1/configurations') {
         const input = await body(request);
-        if (!validRating(input.maxRating) || typeof input.apiKey !== 'string' || input.apiKey.length < 20 || input.apiKey.length > 256 || /\s/.test(input.apiKey)) return send(400, { error: 'Enter a valid TMDB API key and maximum rating.' });
-        const language = input.language ?? 'en-US';
-        if (typeof language !== 'string' || !/^[a-z]{2}(?:-[A-Z]{2})?$/.test(language)) return send(400, { error: 'Invalid language.' });
-        const config: Configuration = { apiKey: input.apiKey, maxRating: input.maxRating, language, managementHash: '' };
+        if (typeof input.apiKey !== 'string' || input.apiKey.length < 20 || input.apiKey.length > 256 || /\s/.test(input.apiKey)) return send(400, { error: 'Enter a valid TMDB API key and maximum rating.' });
+        const settings = settingsFrom(input);
+        if (typeof settings === 'string') return send(400, { error: settings });
+        const config: Configuration = { apiKey: input.apiKey, ...settings, managementHash: '' };
         await tmdb.validate(config);
         const result = await store.create(config);
         return send(201, { ...result, manifestPath: `/${result.id}/manifest.json`, maxRating: config.maxRating });
@@ -75,9 +105,10 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb(), authorizati
         try { previous = await store.get(id); }
         catch { return send(404, { error: 'Configuration unavailable.' }); }
         const input = await body(request);
-        if (!validRating(input.maxRating)) return send(400, { error: 'Choose a supported maximum rating.' });
-        const result = await store.create({ apiKey: previous.apiKey, language: previous.language, maxRating: input.maxRating });
-        return send(201, { ...result, manifestPath: `/${result.id}/manifest.json`, maxRating: input.maxRating });
+        const settings = settingsFrom(input, previous);
+        if (typeof settings === 'string') return send(400, { error: settings });
+        const result = await store.create({ apiKey: previous.apiKey, ...settings });
+        return send(201, { ...result, manifestPath: `/${result.id}/manifest.json`, maxRating: settings.maxRating });
       }
       // Keep capability-based management for standalone/custom-server setups.
       const cloneMatch = /^\/v1\/configurations\/([A-Za-z0-9_-]{43})\/clone$/.exec(url.pathname);
@@ -86,9 +117,10 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb(), authorizati
         try { previous = await store.getManaged(cloneMatch[1]!, request.headers.authorization?.replace(/^Bearer /, '') || ''); }
         catch { return send(403, { error: 'Configuration or management token is invalid.' }); }
         const input = await body(request);
-        if (!validRating(input.maxRating)) return send(400, { error: 'Choose a supported maximum rating.' });
-        const result = await store.create({ apiKey: previous.apiKey, language: previous.language, maxRating: input.maxRating });
-        return send(201, { ...result, manifestPath: `/${result.id}/manifest.json`, maxRating: input.maxRating });
+        const settings = settingsFrom(input, previous);
+        if (typeof settings === 'string') return send(400, { error: settings });
+        const result = await store.create({ apiKey: previous.apiKey, ...settings });
+        return send(201, { ...result, manifestPath: `/${result.id}/manifest.json`, maxRating: settings.maxRating });
       }
       const deleteMatch = /^\/v1\/configurations\/([A-Za-z0-9_-]{43})$/.exec(url.pathname);
       if (request.method === 'DELETE' && deleteMatch) {
@@ -98,9 +130,11 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb(), authorizati
       }
       const parts = url.pathname.split('/').filter(Boolean);
       if (!parts[0] || !/^[A-Za-z0-9_-]{43}$/.test(parts[0])) return send(404, { error: 'Not found' });
+      // Stremio's "Configure" button opens <addon>/configure; send it to the setup page.
+      if (request.method === 'GET' && parts.length === 2 && parts[1] === 'configure') { response.writeHead(302, { Location: '/configure', 'Cache-Control': 'no-store' }); return response.end(); }
       let config: Configuration;
       try { config = await store.get(parts[0]); } catch { return send(404, { error: 'Configuration unavailable' }); }
-      if (request.method === 'GET' && parts.length === 2 && parts[1] === 'manifest.json') return send(200, manifest(config.maxRating));
+      if (request.method === 'GET' && parts.length === 2 && parts[1] === 'manifest.json') return send(200, manifest(config));
       if (request.method === 'POST' && parts.length === 2 && parts[1] === 'check') {
         const input = await body(request);
         if (!Array.isArray(input.items) || input.items.length > 200 || input.items.some((item: any) => !item || !['movie', 'series'].includes(item.type) || typeof item.id !== 'string' || item.id.length > 128)) return send(400, { error: 'Provide up to 200 movie or series IDs.' });
@@ -112,6 +146,7 @@ export function createHandler(store: ConfigStore, tmdb = new Tmdb(), authorizati
       const type = parts[2] as MediaType;
       if (parts[1] === 'catalog' && parts[3]) {
         const kind = parts[3].replace(/\.json$/, '').replace(/^kids-/, '');
+        if (!CATALOG_KINDS.includes(kind as CatalogKind) || (config.catalogs && !config.catalogs.includes(kind as CatalogKind))) return send(404, { error: 'Catalog is not enabled' });
         const extras = new URLSearchParams(parts[4] ? decodeURIComponent(parts[4].replace(/\.json$/, '')) : url.search);
         const skip = Number(extras.get('skip') || 0), query = extras.get('search')?.trim();
         if (!Number.isSafeInteger(skip) || skip < 0 || (query?.length ?? 0) > 200 || (query && kind !== 'popular')) return send(400, { error: 'Invalid catalog query' });

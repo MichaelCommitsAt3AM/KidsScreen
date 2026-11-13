@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>KidsScreen · Set up your add-on</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>KidsScreen</h1>
+    <p class="tagline">A smaller screen. A world of stories.</p>
+    <p>Rating-filtered movies and series for Stremio, Nuvio and other compatible apps.</p>
+  </header>
+
+  <section id="setup-card" class="card">
+    <h2>1 · Configure</h2>
+    <form id="setup">
+      <label>TMDB API key
+        <input name="apiKey" type="password" autocomplete="off" spellcheck="false" required minlength="20" maxlength="256">
+        <small>Get a free key in your <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noreferrer noopener">TMDB settings</a>.</small>
+      </label>
+
+      <label>Maximum rating
+        <select name="maxRating">
+          <option value="G">G · TV-Y, TV-G</option>
+          <option value="PG" selected>PG · up to TV-Y7, TV-PG</option>
+          <option value="PG-13">PG-13 · up to TV-14</option>
+        </select>
+      </label>
+
+      <label>Language
+        <select name="language">
+          <option value="en-US" selected>English (US)</option>
+          <option value="en-GB">English (UK)</option>
+          <option value="es-ES">Español (España)</option>
+          <option value="es-MX">Español (México)</option>
+          <option value="fr-FR">Français</option>
+          <option value="de-DE">Deutsch</option>
+          <option value="it-IT">Italiano</option>
+          <option value="pt-BR">Português (Brasil)</option>
+          <option value="pt-PT">Português (Portugal)</option>
+          <option value="nl-NL">Nederlands</option>
+          <option value="sv-SE">Svenska</option>
+          <option value="pl-PL">Polski</option>
+          <option value="tr-TR">Türkçe</option>
+          <option value="ja-JP">日本語</option>
+          <option value="ko-KR">한국어</option>
+          <option value="zh-CN">中文 (简体)</option>
+        </select>
+      </label>
+
+      <fieldset>
+        <legend>Catalogs</legend>
+        <label class="check"><input type="checkbox" name="catalogs" value="popular" checked> Popular <small>(includes search)</small></label>
+        <label class="check"><input type="checkbox" name="catalogs" value="animation" checked> Animation</label>
+        <label class="check"><input type="checkbox" name="catalogs" value="family" checked> Family</label>
+      </fieldset>
+
+      <label class="check">
+        <input type="checkbox" name="allowUnrated">
+        <span>Show titles with no US rating</span>
+      </label>
+
+      <button type="submit" class="primary">Create add-on</button>
+      <p id="error" role="alert"></p>
+    </form>
+  </section>
+
+  <section id="result-card" class="card" hidden>
+    <h2>2 · Install</h2>
+    <p>Your add-on link is ready.</p>
+    <div class="copy-row">
+      <input id="manifest-url" type="text" readonly aria-label="Add-on manifest link">
+      <button type="button" class="primary" id="copy-manifest">Copy link</button>
+    </div>
+    <div class="actions">
+      <a id="open-stremio" class="button" href="#">Open in Stremio</a>
+      <a id="open-stremio-web" class="button" href="#" target="_blank" rel="noreferrer noopener">Stremio Web</a>
+    </div>
+    <details open>
+      <summary>Install instructions</summary>
+      <ul class="steps">
+        <li><strong>Stremio</strong> — use the buttons above, or open <em>Add-ons → Add-on repository / Install from URL</em> and paste the link.</li>
+        <li><strong>Nuvio</strong> — open <em>Settings → Add-ons</em>, choose to add an add-on by URL and paste the link.</li>
+        <li><strong>Other apps</strong> — paste the link wherever the app asks for a Stremio manifest URL.</li>
+      </ul>
+    </details>
+    <button type="button" id="another">Create another</button>
+  </section>
+
+  <footer>
+    <a href="https://www.themoviedb.org/" rel="noreferrer noopener"><img alt="TMDB" width="100" src="https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg"></a>
+    <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+  </footer>
+</main>
+</body>
+</html>

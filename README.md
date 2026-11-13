@@ -10,6 +10,8 @@ Open [KidsScreen](https://kids-screen.vercel.app) to create a standalone add-on 
 
 Alternatively, use Nuvio's profile editor: enable **Kids account**, choose the maximum rating, enter the TMDB API key, then save. Nuvio's profile editor automatically connects to `https://kids-screen.vercel.app`. KidsScreen validates and stores the key encrypted; the key is not copied into the device's saved TMDB settings. Existing Nuvio configurations retain their stored endpoint until reconfigured.
 
+Standalone setup page: open the service root (for example `https://kids-screen.vercel.app/`), enter a TMDB key and choose the maximum rating (applied to movies and series), language, catalogs and unrated-title handling, then copy the manifest link (or use the Stremio buttons) into your app. The page lives in `public/` and is served by the same server.
+
 KidsScreen also exposes an authenticated enrichment endpoint, `POST /v1/configurations/:id/tmdb`, so a new Nuvio device can load TMDB artwork, credits, trailers, collections and recommendations without re-entering the parent's key. Nuvio sends its Supabase session token; KidsScreen verifies the signed-in user and requires that account to own a kids-enabled profile referencing that exact configuration. The upstream key is only used server-side. See [VERCEL.md](VERCEL.md) for the two required server environment variables.
 
 Nuvio's database needs `20261016120000_kids_profiles.sql` and `20261016170000_optional_kids_profile_pin.sql` from its `supabase/migrations/` directory. Profile PINs are optional; kids setup does not require one. Nuvio automatically adds the configured KidsScreen catalog to that secondary profile and keeps its stream providers. Kids profiles have independent add-ons. Switching profiles requires a PIN only if the destination profile has one configured.
@@ -38,7 +40,7 @@ All classifications use **United States** ratings, independently of interface la
 | PG | G, PG | TV-Y, TV-G, TV-Y7, TV-Y7-FV, TV-PG |
 | PG-13 | G, PG, PG-13 | TV-Y, TV-G, TV-Y7, TV-Y7-FV, TV-PG |
 
-TV-14 and TV-MA are excluded for every tier; TV-14 is above a strict 13-and-under ceiling. This is a conservative product policy, not an official equivalence between movie and TV classifications. Missing/unknown ratings, adult flags, and conflicting higher US ratings are denied. Specials are omitted from series metadata. Unavailable verification never grants access. Series ratings are show-level because TMDB does not supply authoritative US episode ratings; they do not guarantee uniform episode suitability.
+By default TV-14 and TV-MA are excluded for every tier (the standalone setup page maps PG-13 to a TV-14 ceiling; TV-MA is never allowed); TV-14 is above a strict 13-and-under ceiling. This is a conservative product policy, not an official equivalence between movie and TV classifications. Missing/unknown ratings, adult flags, and conflicting higher US ratings are denied. Specials are omitted from series metadata. Unavailable verification never grants access. Series ratings are show-level because TMDB does not supply authoritative US episode ratings; they do not guarantee uniform episode suitability.
 
 G means general audiences, not an editorial promise of toddler suitability. Metadata and classifications can be incomplete or inaccurate. This is a ratings filter, not a curated educational service. See [MPA guidance](https://www.filmratings.com/ratings-guide/) and the [TV Parental Guidelines](https://www.tvguidelines.org/ratings.html).
 
@@ -49,7 +51,7 @@ Nuvio checks Home/featured titles, search, library and related titles before sen
 | Method and route | Purpose |
 | --- | --- |
 | `GET /health` | Readiness/version, no credentials |
-| `POST /v1/configurations` | Validate `{apiKey,maxRating,language?}`; return `{id,managementToken,manifestPath,maxRating}` |
+| `POST /v1/configurations` | Validate `{apiKey,maxRating,language?,maxTvRating?,catalogs?,allowUnrated?}`; return `{id,managementToken,manifestPath,maxRating}` |
 | `POST /v1/configurations/:id/clone` | Reuse the encrypted key with `{maxRating}` and `Authorization: Bearer <managementToken>`; return a new configuration without changing the old one |
 | `DELETE /v1/configurations/:id` | Revoke using `Authorization: Bearer <managementToken>` |
 | `GET /:id/manifest.json` | Six catalogs: popular, animation and family, for movies and series |

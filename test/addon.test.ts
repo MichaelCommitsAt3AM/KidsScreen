@@ -164,3 +164,41 @@ test('authorized rating changes reuse the encrypted key without exposing it or c
     assert.equal((await restarted.get(original.id)).maxRating, 'G');
   } finally { await new Promise<void>(resolve => app.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
 });
+
+test('TV ceiling and unrated toggle override the defaults without loosening anything else', () => {
+  assert.equal(allowsRatings('series', ['TV-14'], { maxRating: 'PG' }), false);
+  assert.equal(allowsRatings('series', ['TV-14'], { maxRating: 'PG', maxTvRating: 'TV-14' }), true);
+  assert.equal(allowsRatings('series', ['TV-MA'], { maxRating: 'PG-13', maxTvRating: 'TV-14' }), false);
+  assert.equal(allowsRatings('series', ['TV-PG'], { maxRating: 'PG-13', maxTvRating: 'TV-G' }), false);
+  assert.equal(allowsRatings('movie', ['PG'], { maxRating: 'G', maxTvRating: 'TV-14' }), false);
+  assert.equal(allowsRatings('movie', [], { maxRating: 'G', allowUnrated: true }), true);
+  assert.equal(allowsRatings('movie', ['NR'], { maxRating: 'G', allowUnrated: true }), true);
+  assert.equal(allowsRatings('movie', ['NR', 'R'], { maxRating: 'PG', allowUnrated: true }), false);
+  assert.equal(allowsRatings('movie', ['NR'], { maxRating: 'PG', allowUnrated: false }), false);
+});
+
+test('setup page is served and saved settings shape the manifest and catalog access', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'kidsscreen-page-'));
+  const tmdb = new Tmdb((async (url: URL) => new Response(JSON.stringify(url.pathname.endsWith('/authentication') ? { success: true } : { results: [] }))) as typeof fetch);
+  const store = await ConfigStore.open(directory), app = createApp(store, tmdb);
+  await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(app.address() as { port: number }).port}`;
+  const post = (route: string, value: unknown) => fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(value) });
+  try {
+    for (const route of ['/', '/configure', '/app.js', '/style.css']) assert.equal((await fetch(base + route)).status, 200, route);
+    assert.match((await fetch(base + '/')).headers.get('content-security-policy') ?? '', /script-src 'self'/);
+    assert.equal((await post('/v1/configurations', { apiKey, maxRating: 'PG', catalogs: [] })).status, 400);
+    assert.equal((await post('/v1/configurations', { apiKey, maxRating: 'PG', catalogs: ['nope'] })).status, 400);
+    assert.equal((await post('/v1/configurations', { apiKey, maxRating: 'PG', maxTvRating: 'TV-MA' })).status, 400);
+    const created = await (await post('/v1/configurations', { apiKey, maxRating: 'PG', maxTvRating: 'TV-14', catalogs: ['animation'], allowUnrated: true })).json() as any;
+    const manifest = await (await fetch(base + created.manifestPath)).json() as any;
+    assert.deepEqual(manifest.catalogs.map((catalog: any) => catalog.id), ['kids-animation', 'kids-animation']);
+    assert.equal((await fetch(`${base}/${created.id}/catalog/movie/kids-family.json`)).status, 404);
+    assert.equal((await fetch(`${base}/${created.id}/catalog/movie/kids-animation.json`)).status, 200);
+    assert.equal((await fetch(`${base}/${created.id}/configure`, { redirect: 'manual' })).status, 302);
+    // Clones that only change the rating keep the other saved settings.
+    const cloned = await (await fetch(`${base}/v1/configurations/${created.id}/clone`, { method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${created.managementToken}` }, body: JSON.stringify({ maxRating: 'G' }) })).json() as any;
+    const saved = await store.get(cloned.id);
+    assert.equal(saved.maxTvRating, 'TV-14'); assert.deepEqual(saved.catalogs, ['animation']); assert.equal(saved.allowUnrated, true);
+  } finally { await new Promise<void>(resolve => app.close(() => resolve())); await rm(directory, { recursive: true, force: true }); }
+});

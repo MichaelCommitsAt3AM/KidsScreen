@@ -9,6 +9,7 @@ FROM node:22-alpine
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=7879 KIDSSCREEN_DATA_DIR=/data
 WORKDIR /app
 COPY --from=build /app/dist ./dist
+COPY public ./public
 RUN mkdir /data && chown node:node /data
 USER node
 VOLUME /data

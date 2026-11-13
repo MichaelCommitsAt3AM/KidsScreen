@@ -77,7 +77,7 @@ export class Tmdb {
     return this.get(config, `${ref.type === 'movie' ? 'movie' : 'tv'}/${id}`, { append_to_response: ref.type === 'movie' ? 'release_dates,external_ids,images' : 'content_ratings,external_ids,images', include_image_language: 'en,null' }, priority);
   }
   async allowed(config: Configuration, ref: MediaRef, priority: RequestPriority = 'background'): Promise<boolean> {
-    try { const details = await this.details(config, ref, priority); return allowsTitle(ref.type, details, config.maxRating); }
+    try { const details = await this.details(config, ref, priority); return allowsTitle(ref.type, details, config); }
     catch { return false; }
   }
   private preview(type: MediaType, details: any) {
@@ -95,7 +95,7 @@ export class Tmdb {
   async catalog(config: Configuration, type: MediaType, kind: string, skip = 0, query?: string) {
     if (!['popular', 'animation', 'family'].includes(kind)) throw new Error('Unknown catalog');
     if (skip > 10000) return [];
-    const key = createHash('sha256').update(JSON.stringify([config.apiKey, config.language, config.maxRating, type, kind, query])).digest('hex');
+    const key = createHash('sha256').update(JSON.stringify([config.apiKey, config.language, config.maxRating, config.maxTvRating, config.allowUnrated, type, kind, query])).digest('hex');
     let state = this.catalogs.get(key);
     if (!state || state.expires < Date.now()) {
       if (this.catalogs.size >= 64) this.catalogs.delete(this.catalogs.keys().next().value!);
@@ -114,13 +114,17 @@ export class Tmdb {
           params.sort_by = 'popularity.desc';
           if (kind !== 'popular') params.with_genres = kind === 'animation' ? '16' : '10751';
           else if (type === 'series') params.with_genres = '16|10762|10751';
-          if (type === 'movie') Object.assign(params, { certification_country: 'US', 'certification.lte': config.maxRating, without_genres: String(MOVIE_HORROR_GENRE_ID) });
+          if (type === 'movie') {
+            params.without_genres = String(MOVIE_HORROR_GENRE_ID);
+            // TMDB drops uncertified titles when a certification filter is present.
+            if (!config.allowUnrated) Object.assign(params, { certification_country: 'US', 'certification.lte': config.maxRating });
+          }
         }
         const result = await this.get(config, `${query ? 'search' : 'discover'}/${tmdbType}`, params, 'background');
         const raw = (result.results ?? []).slice(0, 20);
         const eligible = await Promise.all(raw.map(async (item: any) => {
           const details = await this.details(config, { type, id: `tmdb:${type}:${item.id}` }, 'background');
-          return allowsTitle(type, details, config.maxRating) ? this.preview(type, details) : null;
+          return allowsTitle(type, details, config) ? this.preview(type, details) : null;
         }));
         for (const item of eligible) if (item && !pageState.items.some(existing => existing.id === item.id)) pageState.items.push(item);
         pageState.exhausted = raw.length < 20 || pageState.nextPage >= Math.min(result.total_pages ?? 500, 500);
@@ -134,7 +138,7 @@ export class Tmdb {
 
   async meta(config: Configuration, ref: MediaRef) {
     const details = await this.details(config, ref);
-    if (!allowsTitle(ref.type, details, config.maxRating)) return null;
+    if (!allowsTitle(ref.type, details, config)) return null;
     const preview = this.preview(ref.type, details);
     if (ref.type === 'movie') return { ...preview, runtime: `${details.runtime || 0} min` };
     // Metadata includes normal seasons only. Specials require their own editorial policy.

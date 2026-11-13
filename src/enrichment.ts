@@ -78,7 +78,7 @@ export async function enrichment(tmdb: Tmdb, config: Configuration, endpoint: st
     const localized = query.language ? { ...config, language: query.language } : config;
     const type = title[1] === 'movie' ? 'movie' : 'series';
     const details = await tmdb.details(localized, { type, id: `tmdb:${endpoint.split('/')[1]}` });
-    if (!allowsTitle(type, details, config.maxRating)) return null;
+    if (!allowsTitle(type, details, config)) return null;
     const suffix = endpoint.slice(title[0].length);
     // The parental check already fetched this title and its appended policy/artwork data.
     // Reuse only subresponses whose query semantics match the bundled request.
